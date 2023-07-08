@@ -33,6 +33,13 @@ PINECONE_ENVIRONMENT=
 
 ```
 
+4. Run your server
+
+```
+pnpm run dev
+
+```
+
 - Visit [openai](https://help.openai.com/en/articles/4936850-where-do-i-find-my-secret-api-key) to retrieve API keys and insert into your `.env` file.
 - Visit [pinecone](https://pinecone.io/) to create and retrieve your API keys, and also retrieve your environment and index name from the dashboard.
 
