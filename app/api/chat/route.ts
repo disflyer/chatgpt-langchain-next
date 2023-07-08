@@ -1,70 +1,46 @@
-import { kv } from '@vercel/kv'
-import { OpenAIStream, StreamingTextResponse } from 'ai'
-import { Configuration, OpenAIApi } from 'openai-edge'
+import { ConversationalRetrievalQAChain } from 'langchain/chains'
+import { init } from '@/utils/vectorStore'
+import { PineconeStore } from 'langchain/vectorstores/pinecone'
+import { OpenAIEmbeddings } from 'langchain/embeddings/openai'
+import { ChatOpenAI } from 'langchain/chat_models/openai'
+import { NextResponse } from 'next/server'
 
-import { auth } from '@/auth'
-import { nanoid } from '@/lib/utils'
+const QA_PROMPT = `You are a helpful AI assistant. Use the following pieces of context to answer the question at the end.
+If you don't know the answer, just say you don't know. DO NOT try to make up an answer.
+If the question is not related to the context, politely respond that you are tuned to only answer questions that are related to the context.
 
-export const runtime = 'edge'
+{context}
 
-const configuration = new Configuration({
-  apiKey: process.env.OPENAI_API_KEY
-})
+Question: {question}
+Helpful answer in markdown:`
 
-const openai = new OpenAIApi(configuration)
-
+const vectorStore = await init()
 export async function POST(req: Request) {
   const json = await req.json()
-  const { messages, previewToken } = json
-  const session = await auth()
+  const { messages } = json
+  const question = messages[messages.length - 1].content
+  const embeddings = new OpenAIEmbeddings()
 
-  if (session == null) {
-    return new Response('Unauthorized', {
-      status: 401
-    })
-  }
+  const index = vectorStore.client.Index(process.env.PINECONE_INDEX!)
 
-  if (previewToken) {
-    configuration.apiKey = previewToken
-  }
-
-  const res = await openai.createChatCompletion({
-    model: 'gpt-3.5-turbo',
-    messages,
-    temperature: 0.7,
-    stream: true
+  const pineconeStore = await PineconeStore.fromExistingIndex(embeddings, {
+    pineconeIndex: index,
+    textKey: 'text'
   })
 
-  const stream = OpenAIStream(res, {
-    async onCompletion(completion) {
-      const title = json.messages[0].content.substring(0, 100)
-      const userId = session?.user?.id
-      if (userId) {
-        const id = json.id ?? nanoid()
-        const createdAt = Date.now()
-        const path = `/chat/${id}`
-        const payload = {
-          id,
-          title,
-          userId,
-          createdAt,
-          path,
-          messages: [
-            ...messages,
-            {
-              content: completion,
-              role: 'assistant'
-            }
-          ]
-        }
-        await kv.hmset(`chat:${id}`, payload)
-        await kv.zadd(`user:chat:${userId}`, {
-          score: createdAt,
-          member: `chat:${id}`
-        })
-      }
+  const llm = new ChatOpenAI({
+    temperature: 0.1,
+    modelName: 'gpt-3.5-turbo' //change this to gpt-4 if you have access
+  })
+  const chain = ConversationalRetrievalQAChain.fromLLM(
+    llm,
+    pineconeStore.asRetriever(),
+    {
+      qaTemplate: QA_PROMPT,
+      returnSourceDocuments: true
     }
-  })
+  )
 
-  return new StreamingTextResponse(stream)
+  const res = await chain.call({ question, chat_history: [] })
+  return NextResponse.json(res.text)
 }
