@@ -33,7 +33,7 @@ PINECONE_ENVIRONMENT=
 
 ```
 
-4. Run your server
+4. Run your server.
 
 ```
 pnpm run dev
